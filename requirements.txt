@@ -1,4 +1,9 @@
 streamlit>=1.35
-requests>=2.31
-plotly>=6.0
+pandas>=2.0
+numpy>=1.24
+scipy>=1.10
+plotly>=5.18
 pyyaml>=6.0
+requests>=2.31
+aiohttp>=3.8
+websocket-client>=1.6
