@@ -32,7 +32,7 @@ class DeribitClient:
             "Accept": "application/json",
             "User-Agent": "VolSurfaceScanner/1.0"
         })
-        self._instruments_cache: dict[str, list] = {}
+        self._instruments_cache: dict = {}
     
     def _api_call(self, method: str, params: dict = None) -> Optional[dict]:
         """Make a Deribit API v2 call"""
@@ -59,7 +59,7 @@ class DeribitClient:
             return float(result.get("index_price", 0))
         return None
     
-    def get_option_instruments(self, currency: str = "BTC") -> list[dict]:
+    def get_option_instruments(self, currency: str = "BTC") -> list:
         """Get all available option instruments"""
         if currency in self._instruments_cache:
             return self._instruments_cache[currency]
@@ -109,16 +109,20 @@ class DeribitClient:
                 option_type = "call" if parts[3] == "C" else "put"
                 
                 # Calculate time to expiry
-                expiry_date = datetime.strptime(expiry_str, "%d%b%y")
-                now = datetime.now()
-                T = max((expiry_date - now).days / 365.0, 0.001)
+                try:
+                    expiry_date = datetime.strptime(expiry_str, "%d%b%y")
+                    now = datetime.now()
+                    T = max((expiry_date - now).days / 365.0, 0.001)
+                except ValueError:
+                    # Try alternative date format
+                    T = 0.1
                 
                 row = {
                     "instrument_name": name,
                     "currency": underlying,
                     "strike": strike,
                     "expiry": expiry_str,
-                    "expiry_date": expiry_date,
+                    "expiry_date": expiry_date if 'expiry_date' in dir() else None,
                     "expiry_years": T,
                     "option_type": option_type,
                     "is_active": inst.get("is_active", False),
@@ -137,26 +141,30 @@ class DeribitClient:
         if df.empty:
             return df
         
-        # Fetch tickers for active instruments (batch)
-        active = df[df["is_active"] == True]
+        # Fetch tickers for active instruments (batch) - limit to avoid rate limits
+        active = df[df["is_active"] == True] if "is_active" in df.columns else df
         logger.info(f"Fetching tickers for {len(active)} active instruments...")
         
         ticker_data = []
-        for _, row in active.head(100).iterrows():  # Limit to avoid rate limits
-            ticker = self.get_option_ticker(row["instrument_name"])
-            if ticker:
-                ticker_data.append({
-                    "instrument_name": row["instrument_name"],
-                    "bid": ticker.get("best_bid_price"),
-                    "ask": ticker.get("best_ask_price"),
-                    "mid": ticker.get("mid_price"),
-                    "mark_price": ticker.get("mark_price"),
-                    "underlying_price": ticker.get("underlying_price"),
-                    "iv": ticker.get("mark_iv"),
-                    "volume": ticker.get("stats", {}).get("volume", 0),
-                    "open_interest": ticker.get("open_interest", 0),
-                    "last_price": ticker.get("last_price"),
-                })
+        for _, row in active.head(50).iterrows():  # Limit to 50 to avoid rate limits
+            try:
+                ticker = self.get_option_ticker(row["instrument_name"])
+                if ticker:
+                    ticker_data.append({
+                        "instrument_name": row["instrument_name"],
+                        "bid": ticker.get("best_bid_price"),
+                        "ask": ticker.get("best_ask_price"),
+                        "mid": ticker.get("mid_price"),
+                        "mark_price": ticker.get("mark_price"),
+                        "underlying_price": ticker.get("underlying_price"),
+                        "iv": ticker.get("mark_iv"),
+                        "volume": ticker.get("stats", {}).get("volume", 0) if isinstance(ticker.get("stats"), dict) else 0,
+                        "open_interest": ticker.get("open_interest", 0),
+                        "last_price": ticker.get("last_price"),
+                    })
+            except Exception as e:
+                logger.debug(f"Ticker fetch failed for {row['instrument_name']}: {e}")
+                continue
         
         if ticker_data:
             ticker_df = pd.DataFrame(ticker_data)
@@ -170,14 +178,29 @@ class DeribitClient:
         result = self._api_call("get_historical_volatility", {"currency": currency})
         if result and len(result) > 0:
             # Returns [1w, 1m, 3m, 6m, 1y] volatilities
-            return float(result[-2]) / 100 if result[-2] else None  # 6-month RV
+            try:
+                val = result[-2]
+                return float(val) / 100 if val else None
+            except (IndexError, TypeError, ValueError):
+                return None
         return None
     
     def get_summary(self, currency: str = "BTC") -> dict:
         """Get a summary of the current options market"""
-        index_price = self.get_index_price(currency)
-        hist_vol = self.get_historical_volatility(currency)
-        instruments = self.get_option_instruments(currency)
+        try:
+            index_price = self.get_index_price(currency)
+        except Exception:
+            index_price = None
+        
+        try:
+            hist_vol = self.get_historical_volatility(currency)
+        except Exception:
+            hist_vol = None
+        
+        try:
+            instruments = self.get_option_instruments(currency)
+        except Exception:
+            instruments = []
         
         active_instruments = [i for i in instruments if i.get("is_active", False)]
         

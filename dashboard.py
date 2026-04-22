@@ -1,4 +1,4 @@
-"""Streamlit Dashboard - Real-time visualization of scanning results (Lightweight)"""
+"""Streamlit Dashboard - Real-time visualization of scanning results"""
 import sys
 import os
 import time
@@ -34,7 +34,7 @@ from deribit_client import DeribitClient
 
 logger = logging.getLogger(__name__)
 
-# Page config
+# Page config - MUST be first Streamlit command
 st.set_page_config(
     page_title="Polymarket Scanner + Vol Surface",
     page_icon="📊",
@@ -242,7 +242,7 @@ with tab1:
         
         st.dataframe(
             pd.DataFrame(opp_data),
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
         
@@ -262,7 +262,7 @@ with tab1:
             yaxis_title="Profit %",
             template="plotly_dark"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("No arbitrage opportunities found in this scan. Markets appear efficient.")
     
@@ -279,17 +279,30 @@ with tab2:
     
     with col1:
         st.markdown("#### Market Summary")
-        summary = deribit.get_summary(vol_currency)
+        try:
+            summary = deribit.get_summary(vol_currency)
+        except Exception as e:
+            logger.error(f"Deribit summary error: {e}")
+            summary = {}
         
-        st.metric("Index Price", f"${summary.get('index_price', 0):,.0f}")
-        st.metric("Historical Vol", f"{summary.get('historical_volatility', 0):.1%}")
-        st.metric("Active Instruments", summary.get('active_instruments', 0))
+        # Safe formatting - handle None values
+        index_price = summary.get("index_price") or 0
+        hist_vol = summary.get("historical_volatility") or 0
+        active_inst = summary.get("active_instruments") or 0
+        
+        st.metric("Index Price", f"${index_price:,.0f}" if index_price else "N/A")
+        st.metric("Historical Vol", f"{hist_vol:.1%}" if hist_vol else "N/A")
+        st.metric("Active Instruments", active_inst)
     
     with col2:
         st.markdown("#### Implied Volatility Surface")
         
-        with st.spinner("Fetching options data from Deribit..."):
-            chain = deribit.get_options_chain(vol_currency)
+        try:
+            with st.spinner("Fetching options data from Deribit..."):
+                chain = deribit.get_options_chain(vol_currency)
+        except Exception as e:
+            logger.error(f"Options chain error: {e}")
+            chain = pd.DataFrame()
         
         if not chain.empty and "iv" in chain.columns:
             display_chain = chain[chain["iv"].notna()].copy()
@@ -319,7 +332,7 @@ with tab2:
                     template="plotly_dark",
                     height=500
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 
                 nearest_expiry = display_chain["expiry_years"].min()
                 near_chain = display_chain[display_chain["expiry_years"] == nearest_expiry]
@@ -348,7 +361,7 @@ with tab2:
                         yaxis_title="Implied Vol",
                         template="plotly_dark"
                     )
-                    st.plotly_chart(fig2, use_container_width=True)
+                    st.plotly_chart(fig2, width="stretch")
             else:
                 st.warning("No IV data available from Deribit")
         else:
@@ -417,29 +430,39 @@ with tab3:
 with tab4:
     st.subheader("Risk Management Dashboard")
     
-    comps = init_scanner_components()
-    risk_status = comps["risk_mgr"].get_status()
+    try:
+        comps = init_scanner_components()
+        risk_status = comps["risk_mgr"].get_status()
+    except Exception as e:
+        logger.error(f"Risk dashboard error: {e}")
+        risk_status = {
+            "daily_pnl": 0, "daily_loss": 0, "open_positions": 0,
+            "max_open_positions": 5, "total_exposure": 0,
+            "max_daily_loss": 50, "remaining_daily_capacity": 50
+        }
     
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("Daily P&L", f"${risk_status['daily_pnl']:.2f}")
+        st.metric("Daily P&L", f"${risk_status.get('daily_pnl', 0):.2f}")
     with c2:
-        st.metric("Daily Loss", f"${risk_status['daily_loss']:.2f}")
+        st.metric("Daily Loss", f"${risk_status.get('daily_loss', 0):.2f}")
     with c3:
-        st.metric("Open Positions", f"{risk_status['open_positions']}/{risk_status['max_open_positions']}")
+        open_pos = risk_status.get('open_positions', 0)
+        max_pos = risk_status.get('max_open_positions', 5)
+        st.metric("Open Positions", f"{open_pos}/{max_pos}")
     with c4:
-        st.metric("Total Exposure", f"${risk_status['total_exposure']:.2f}")
+        st.metric("Total Exposure", f"${risk_status.get('total_exposure', 0):.2f}")
     
     st.markdown("---")
     
     st.markdown("### Risk Limits")
     limits_data = {
         "Parameter": ["Max Daily Loss", "Max Open Positions", "Max Single Bet %", "Stop Loss %", "Max Position Size"],
-        "Limit": [f"${risk_status['max_daily_loss']}", f"{risk_status['max_open_positions']}", "10%", "15%", "$100"],
-        "Used": [f"${risk_status['daily_loss']:.2f}", f"{risk_status['open_positions']}", "-", "-", "-"],
-        "Remaining": [f"${risk_status['remaining_daily_capacity']:.2f}", f"{risk_status['max_open_positions'] - risk_status['open_positions']}", "-", "-", "-"]
+        "Limit": [f"${risk_status.get('max_daily_loss', 50)}", f"{max_pos}", "10%", "15%", "$100"],
+        "Used": [f"${risk_status.get('daily_loss', 0):.2f}", f"{open_pos}", "-", "-", "-"],
+        "Remaining": [f"${risk_status.get('remaining_daily_capacity', 50):.2f}", f"{max_pos - open_pos}", "-", "-", "-"]
     }
-    st.dataframe(pd.DataFrame(limits_data), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(limits_data), width="stretch", hide_index=True)
     
     st.markdown("---")
     st.markdown("### System Info")
