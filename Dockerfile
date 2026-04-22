@@ -2,30 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies and curl for healthcheck
+# Install curl for healthcheck only
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for Docker layer caching
 COPY requirements.txt .
-
-# Install Python dependencies with pre-built wheels where possible
-RUN pip install --no-cache-dir --extra-index-url https://pypi.org/simple/ \
-    numpy>=2.0 \
-    scipy>=1.14 \
-    pandas>=2.2 \
-    && pip install --no-cache-dir \
-    web3>=6.0 \
-    eth-account>=0.11 \
-    plotly>=6.0 \
-    streamlit>=1.35 \
-    websocket-client>=1.7 \
-    requests>=2.31 \
-    aiohttp>=3.9 \
-    pyyaml>=6.0 \
-    python-dotenv>=1.0
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy all source files
 COPY . .
@@ -44,5 +28,4 @@ CMD ["streamlit", "run", "dashboard.py", \
      "--server.headless=true", \
      "--server.enableCORS=false", \
      "--server.enableXsrfProtection=false", \
-     "--browser.gatherUsageStats=false", \
-     "--server.maxUploadSize=50"]
+     "--browser.gatherUsageStats=false"]

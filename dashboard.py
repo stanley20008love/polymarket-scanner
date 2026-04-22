@@ -1,24 +1,35 @@
-"""Streamlit Dashboard - Real-time visualization of scanning results"""
+"""Streamlit Dashboard - Real-time visualization of scanning results (Lightweight)"""
 import sys
 import os
 import time
+import math
 import logging
 from datetime import datetime
 
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # Add parent dir to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Try to import heavy dependencies - graceful fallback
+HAS_SCIPY = False
+try:
+    import numpy as np
+    from scipy.stats import norm
+    HAS_SCIPY = True
+except ImportError:
+    pass
+
 from models import ArbitrageType
-from main import ScannerEngine
-from black_scholes import BlackScholes
-from sabr_calibrator import SABRCalibrator
-from surface_builder import VolatilitySurface
-from gamma_scalping import GammaScalper
+from client import PolymarketClient
+from fee_calculator import FeeCalculator
+from risk_manager import RiskManager
+from exclusive_outcome import ExclusiveOutcomeScanner
+from ladder_contradiction import LadderContradictionScanner
+from cross_market import CrossMarketScanner
+from negrisk_adapter import NegRiskAdapter
 from deribit_client import DeribitClient
 
 logger = logging.getLogger(__name__)
@@ -42,22 +53,39 @@ st.markdown("""
     }
     .profit-positive { color: #22c55e; font-weight: 700; }
     .profit-negative { color: #ef4444; font-weight: 700; }
-    .status-running { color: #22c55e; }
-    .status-stopped { color: #ef4444; }
 </style>
 """, unsafe_allow_html=True)
 
 
+# === Lightweight Scanner (no scipy needed) ===
 @st.cache_resource
-def init_scanner():
-    """Initialize scanner engine"""
-    return ScannerEngine()
-
-
-@st.cache_resource
-def init_vol_surface():
-    """Initialize volatility surface builder"""
-    return VolatilitySurface()
+def init_scanner_components():
+    """Initialize scanner components"""
+    import yaml
+    config = {}
+    try:
+        with open("config.yaml", 'r') as f:
+            config = yaml.safe_load(f) or {}
+    except:
+        pass
+    
+    api_config = config.get("api", {})
+    fee_config = config.get("fees", {})
+    risk_config = config.get("risk", {})
+    scanner_config = config.get("scanner", {})
+    
+    client = PolymarketClient(api_config)
+    fee_calc = FeeCalculator(fee_config)
+    risk_mgr = RiskManager(risk_config)
+    min_profit = scanner_config.get("min_profit_threshold", 0.02)
+    
+    return {
+        "client": client,
+        "fee_calc": fee_calc,
+        "risk_mgr": risk_mgr,
+        "min_profit": min_profit,
+        "config": config,
+    }
 
 
 @st.cache_resource
@@ -66,17 +94,85 @@ def init_deribit():
     return DeribitClient()
 
 
-@st.cache_resource
-def init_gamma_scalper():
-    """Initialize gamma scalper"""
-    return GammaScalper()
-
-
 @st.cache_data(ttl=60)
 def run_scan():
     """Run a single scan and cache results for 60s"""
-    engine = init_scanner()
-    return engine.scan_once()
+    from models import ScanResult, MarketType
+    
+    comps = init_scanner_components()
+    client = comps["client"]
+    fee_calc = comps["fee_calc"]
+    min_profit = comps["min_profit"]
+    
+    result = ScanResult()
+    
+    try:
+        # Fetch active markets
+        markets = client.get_active_markets(limit=200)
+        result.markets_scanned = len(markets)
+        
+        if not markets:
+            result.errors.append("No markets fetched")
+            return result
+        
+        # Initialize scanners
+        exclusive = ExclusiveOutcomeScanner(fee_calc, min_profit)
+        ladder = LadderContradictionScanner(fee_calc, min_profit)
+        cross = CrossMarketScanner(fee_calc, min_profit)
+        negrisk = NegRiskAdapter(fee_calc, min_profit)
+        
+        # 1. Exclusive outcome
+        result.opportunities_found.extend(exclusive.scan_markets(markets))
+        
+        # 2. Ladder contradiction (group by category)
+        from collections import defaultdict
+        category_groups = defaultdict(list)
+        for m in markets:
+            category_groups[m.category or "unknown"].append(m)
+        
+        for cat, cat_markets in category_groups.items():
+            if len(cat_markets) >= 2:
+                result.opportunities_found.extend(ladder.scan_ladder_group(cat_markets))
+        
+        # 3. Cross-market
+        result.opportunities_found.extend(cross.scan_market_pairs(markets))
+        
+        # 4. NegRisk
+        neg_risk_markets = [m for m in markets if m.market_type == MarketType.NEG_RISK]
+        if neg_risk_markets:
+            neg_groups = negrisk.group_neg_risk_markets(neg_risk_markets)
+            for group_key, group_markets in neg_groups.items():
+                result.opportunities_found.extend(negrisk.scan_neg_risk_group(group_markets))
+        
+        # Sort by profit
+        result.opportunities_found.sort(key=lambda x: x.profit_percentage, reverse=True)
+        
+    except Exception as e:
+        result.errors.append(str(e))
+    
+    return result
+
+
+# === Simple Black-Scholes without scipy (pure math) ===
+def bs_call_price(S, K, T, r, sigma):
+    """Black-Scholes call price using math stdlib only"""
+    if T <= 0 or sigma <= 0:
+        return max(S - K, 0)
+    d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*math.sqrt(T))
+    d2 = d1 - sigma*math.sqrt(T)
+    # Approximate CDF using error function
+    from math import erf, sqrt
+    N = lambda x: 0.5 * (1 + erf(x/sqrt(2)))
+    return S * N(d1) - K * math.exp(-r*T) * N(d2)
+
+def bs_put_price(S, K, T, r, sigma):
+    if T <= 0 or sigma <= 0:
+        return max(K - S, 0)
+    d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*math.sqrt(T))
+    d2 = d1 - sigma*math.sqrt(T)
+    from math import erf, sqrt
+    N = lambda x: 0.5 * (1 + erf(x/sqrt(2)))
+    return K * math.exp(-r*T) * N(-d2) - S * N(-d1)
 
 
 # === SIDEBAR ===
@@ -94,10 +190,10 @@ max_positions = st.sidebar.slider("Max open positions", 1, 20, 5)
 st.sidebar.markdown("---")
 st.sidebar.subheader("Vol Surface")
 vol_currency = st.sidebar.selectbox("Currency", ["BTC", "ETH"], index=0)
-vol_beta = st.sidebar.slider("SABR Beta", 0.0, 1.0, 0.5, 0.1)
 
 st.sidebar.markdown("---")
-st.sidebar.info("Scanner Mode: READ-ONLY\nNo trades executed")
+scipy_status = "✅ Available" if HAS_SCIPY else "⚠️ Not installed (lightweight mode)"
+st.sidebar.info(f"Scanner Mode: READ-ONLY\nScipy: {scipy_status}")
 
 # === MAIN CONTENT ===
 st.title("📊 Polymarket Scanner + Options Vol Surface")
@@ -133,7 +229,6 @@ with tab1:
     st.markdown("---")
     
     if result.opportunities_found:
-        # Opportunities table
         opp_data = []
         for opp in result.opportunities_found:
             opp_data.append({
@@ -151,7 +246,6 @@ with tab1:
             hide_index=True
         )
         
-        # Profit distribution chart
         fig = go.Figure()
         types = list(set(o.arbitrage_type.value for o in result.opportunities_found))
         for arb_type in types:
@@ -190,23 +284,17 @@ with tab2:
         st.metric("Index Price", f"${summary.get('index_price', 0):,.0f}")
         st.metric("Historical Vol", f"{summary.get('historical_volatility', 0):.1%}")
         st.metric("Active Instruments", summary.get('active_instruments', 0))
-        
-        st.markdown("#### SABR Parameters")
-        st.info(f"Beta = {vol_beta}")
     
     with col2:
         st.markdown("#### Implied Volatility Surface")
         
-        # Get options chain
         with st.spinner("Fetching options data from Deribit..."):
             chain = deribit.get_options_chain(vol_currency)
         
         if not chain.empty and "iv" in chain.columns:
-            # Filter for display
             display_chain = chain[chain["iv"].notna()].copy()
             
             if not display_chain.empty:
-                # 3D Surface plot
                 fig = go.Figure(data=[go.Scatter3d(
                     x=display_chain["strike"],
                     y=display_chain["expiry_years"],
@@ -233,7 +321,6 @@ with tab2:
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Vol smile for nearest expiry
                 nearest_expiry = display_chain["expiry_years"].min()
                 near_chain = display_chain[display_chain["expiry_years"] == nearest_expiry]
                 
@@ -266,14 +353,10 @@ with tab2:
                 st.warning("No IV data available from Deribit")
         else:
             st.warning("Could not fetch options chain. Deribit API may be rate-limited.")
-            st.info("The scanner will retry on next refresh.")
 
 # === TAB 3: GAMMA SCALPING ===
 with tab3:
     st.subheader("Gamma Scalping Analysis")
-    
-    scalper = init_gamma_scalper()
-    bs = BlackScholes()
     
     col1, col2 = st.columns([1, 2])
     
@@ -288,84 +371,54 @@ with tab3:
         position_size = st.number_input("Position Size (contracts)", value=1.0, step=0.5)
         
         T = expiry_days / 365.0
-        
-        if st.button("Analyze Opportunity", type="primary"):
-            analysis = scalper.analyze_opportunity(
-                S=spot, K=strike, T=T,
-                sigma_implied=implied_vol,
-                sigma_realized=realized_vol,
-                position_size=position_size,
-                option_type=opt_type
-            )
-            st.session_state['analysis'] = analysis
     
     with col2:
-        if 'analysis' in st.session_state:
-            a = st.session_state['analysis']
-            
-            st.markdown(f"### {a['recommendation']}")
-            st.markdown("---")
-            
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.metric("Option Price", f"${a['option_price']:.2f}")
-                st.metric("Vol Edge", f"{a['vol_edge']:.2%}")
-            with c2:
-                st.metric("Gamma P&L/Day", f"${a['gamma_pnl_daily']:.4f}")
-                st.metric("Theta Cost/Day", f"${a['theta_cost_daily']:.4f}")
-            with c3:
-                st.metric("Net Daily P&L", f"${a['net_daily_pnl']:.4f}")
-                st.metric("Profit Ratio", f"{a['profit_ratio']:.2f}x")
-            
-            st.markdown("---")
-            
-            # Greeks display
-            g = a['greeks']
-            greeks_fig = go.Figure(data=[
-                go.Bar(name='Value', x=list(g.keys()), y=list(g.values()),
-                       marker_color=['#3b82f6', '#22c55e', '#ef4444', '#f59e0b', '#8b5cf6'])
-            ])
-            greeks_fig.update_layout(title="Greeks", template="plotly_dark")
-            st.plotly_chart(greeks_fig, use_container_width=True)
-            
-            st.metric("Breakeven Realized Vol", f"{a['breakeven_vol']:.1%}")
-            st.metric("Total Projected P&L", f"${a['total_projected_pnl']:.4f}")
-            st.metric("ROI", f"{a['roi']:.1%}")
-            
-            # Simulation
-            if st.button("Run Monte Carlo Simulation"):
-                with st.spinner("Simulating..."):
-                    sim = scalper.simulate_scalping(
-                        S0=spot, K=strike, T=T,
-                        sigma_implied=implied_vol,
-                        sigma_realized=realized_vol,
-                        option_type=opt_type,
-                        position_size=position_size
-                    )
-                    
-                    st.metric("Simulated Total P&L", f"${sim['total_pnl']:.4f}")
-                    st.metric("Simulated ROI", f"{sim['roi']:.1%}")
-                    
-                    # Price path
-                    path_fig = go.Figure()
-                    path_fig.add_trace(go.Scatter(
-                        y=sim['price_path'][:200],
-                        mode='lines', name='Price Path',
-                        line=dict(color='#3b82f6', width=1)
-                    ))
-                    path_fig.add_hline(y=strike, line_dash="dash", 
-                                       annotation_text=f"Strike ${strike:,.0f}")
-                    path_fig.update_layout(title="Simulated Price Path", template="plotly_dark")
-                    st.plotly_chart(path_fig, use_container_width=True)
-        else:
-            st.info("Set parameters and click 'Analyze Opportunity' to see results")
+        if not HAS_SCIPY:
+            st.warning("⚠️ Scipy not installed. Using simplified Black-Scholes (no Greeks/Gamma scalping).")
+            st.info("Install scipy for full features: `pip install scipy numpy`")
+        
+        # Simple analysis even without scipy
+        call_p = bs_call_price(spot, strike, T, 0.05, implied_vol)
+        put_p = bs_put_price(spot, strike, T, 0.05, implied_vol)
+        option_price = call_p if opt_type == "call" else put_p
+        
+        daily_move = realized_vol * spot / math.sqrt(252)
+        
+        st.markdown("#### Quick Analysis")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Option Price", f"${option_price:.2f}")
+            vol_edge = realized_vol - implied_vol
+            st.metric("Vol Edge", f"{vol_edge:.2%}")
+        with c2:
+            st.metric("Expected Daily Move", f"${daily_move:.2f}")
+            st.metric("Implied Daily Move", f"${implied_vol * spot / math.sqrt(252):.2f}")
+        with c3:
+            st.metric("Days to Expiry", expiry_days)
+            st.metric("Total Cost", f"${option_price * position_size * 100:.2f}")
+        
+        if HAS_SCIPY:
+            from gamma_scalping import GammaScalper
+            scalper = GammaScalper()
+            if st.button("Full Gamma Analysis", type="primary"):
+                analysis = scalper.analyze_opportunity(
+                    S=spot, K=strike, T=T,
+                    sigma_implied=implied_vol,
+                    sigma_realized=realized_vol,
+                    position_size=position_size,
+                    option_type=opt_type
+                )
+                st.markdown(f"### {analysis['recommendation']}")
+                st.metric("Net Daily P&L", f"${analysis['net_daily_pnl']:.4f}")
+                st.metric("Profit Ratio", f"{analysis['profit_ratio']:.2f}x")
+                st.metric("Breakeven Vol", f"{analysis['breakeven_vol']:.1%}")
 
 # === TAB 4: RISK DASHBOARD ===
 with tab4:
     st.subheader("Risk Management Dashboard")
     
-    engine = init_scanner()
-    risk_status = engine.risk_manager.get_status()
+    comps = init_scanner_components()
+    risk_status = comps["risk_mgr"].get_status()
     
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -379,7 +432,6 @@ with tab4:
     
     st.markdown("---")
     
-    # Risk limits
     st.markdown("### Risk Limits")
     limits_data = {
         "Parameter": ["Max Daily Loss", "Max Open Positions", "Max Single Bet %", "Stop Loss %", "Max Position Size"],
@@ -390,13 +442,11 @@ with tab4:
     st.dataframe(pd.DataFrame(limits_data), use_container_width=True, hide_index=True)
     
     st.markdown("---")
-    st.markdown("### System Status")
-    status = engine.get_status()
+    st.markdown("### System Info")
     st.json({
-        "Scanner Running": status["running"],
-        "Total Scans": status["scan_count"],
-        "Total Opportunities Found": status["total_opportunities"],
-        "Last Scan": status["last_scan"]
+        "Scipy Available": HAS_SCIPY,
+        "Python Version": sys.version.split()[0],
+        "Scanner Mode": "READ-ONLY",
     })
 
 # Auto-refresh
