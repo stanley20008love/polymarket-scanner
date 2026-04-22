@@ -1,3 +1,5 @@
 {
-  "build_type": "docker"
+  "build_type": "static",
+  "app_dir": ".",
+  "start_command": "streamlit run dashboard.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --browser.gatherUsageStats=false"
 }

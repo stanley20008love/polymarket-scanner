@@ -4,8 +4,14 @@ import logging
 from typing import Optional
 from datetime import datetime
 
-import aiohttp
 import requests
+
+# aiohttp is optional - only needed for async operations
+try:
+    import aiohttp
+    HAS_AIOHTTP = True
+except ImportError:
+    HAS_AIOHTTP = False
 
 from models import Market, OrderBook, MarketType
 
@@ -23,16 +29,18 @@ class PolymarketClient:
             "Accept": "application/json",
             "User-Agent": "PolymarketScanner/1.0"
         })
-        self._async_session: Optional[aiohttp.ClientSession] = None
+        self._async_session = None
     
-    async def _get_async_session(self) -> aiohttp.ClientSession:
+    async def _get_async_session(self):
+        if not HAS_AIOHTTP:
+            raise RuntimeError("aiohttp not installed - async operations not available")
         if self._async_session is None or self._async_session.closed:
             self._async_session = aiohttp.ClientSession(
                 headers={"Accept": "application/json", "User-Agent": "PolymarketScanner/1.0"}
             )
         return self._async_session
     
-    def get_active_markets(self, limit: int = 100, offset: int = 0) -> list[Market]:
+    def get_active_markets(self, limit: int = 100, offset: int = 0) -> list:
         """Fetch active markets from Gamma API"""
         markets = []
         try:
@@ -63,8 +71,12 @@ class PolymarketClient:
         
         return markets
     
-    async def get_active_markets_async(self, limit: int = 100, offset: int = 0) -> list[Market]:
+    async def get_active_markets_async(self, limit: int = 100, offset: int = 0) -> list:
         """Async version of get_active_markets"""
+        if not HAS_AIOHTTP:
+            # Fallback to sync
+            return self.get_active_markets(limit, offset)
+        
         markets = []
         try:
             session = await self._get_async_session()
@@ -112,8 +124,8 @@ class PolymarketClient:
             return OrderBook(
                 condition_id=token_id,
                 outcome="",
-                bids=sorted(bids, key=lambda x: -x[0]),  # Highest first
-                asks=sorted(asks, key=lambda x: x[0]),   # Lowest first
+                bids=sorted(bids, key=lambda x: -x[0]),
+                asks=sorted(asks, key=lambda x: x[0]),
                 timestamp=datetime.now()
             )
         except Exception as e:
@@ -134,7 +146,7 @@ class PolymarketClient:
             logger.debug(f"Failed to fetch price for {token_id}: {e}")
             return None
     
-    def get_neg_risk_markets(self, slug: str = None) -> list[Market]:
+    def get_neg_risk_markets(self, slug: str = None) -> list:
         """Fetch NegRisk markets (mutually exclusive outcome groups)"""
         markets = []
         try:
@@ -199,5 +211,5 @@ class PolymarketClient:
     
     async def close_async(self):
         """Clean up async resources"""
-        if self._async_session and not self._async_session.closed:
+        if HAS_AIOHTTP and self._async_session and not self._async_session.closed:
             await self._async_session.close()
