@@ -9,7 +9,10 @@ COPY . .
 
 RUN printf '[server]\nheadless = true\nenableCORS = false\nenableXsrfProtection = false\naddress = "0.0.0.0"\n\n[browser]\ngatherUsageStats = false\n' > .streamlit/config.toml
 
+# Zeabur sets PORT environment variable
 ENV PORT=8501
+
 EXPOSE 8501
 
-CMD ["streamlit", "run", "dashboard.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true", "--server.enableCORS=false", "--server.enableXsrfProtection=false", "--browser.gatherUsageStats=false"]
+# Use shell form so $PORT gets expanded
+CMD streamlit run dashboard.py --server.port=${PORT} --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --browser.gatherUsageStats=false
