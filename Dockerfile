@@ -7,12 +7,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN printf '[server]\nheadless = true\nenableCORS = false\nenableXsrfProtection = false\naddress = "0.0.0.0"\n\n[browser]\ngatherUsageStats = false\n' > .streamlit/config.toml
-
-# Zeabur sets PORT environment variable
 ENV PORT=8501
-
 EXPOSE 8501
 
-# Use shell form so $PORT gets expanded
-CMD streamlit run dashboard.py --server.port=${PORT} --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --browser.gatherUsageStats=false
+# First try: simple health check server on port 8501
+# This tests if the basic container networking works
+CMD python3 -c "
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import os
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html')
+        self.end_headers()
+        self.write = self.wfile.write
+        self.write(b'<h1>Polymarket Scanner</h1><p>Service is running!</p>')
+port = int(os.environ.get('PORT', 8501))
+HTTPServer(('0.0.0.0', port), Handler).serve_forever()
+"
