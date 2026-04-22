@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 import re
 
-from models import Market, ArbitrageOpportunity, ArbitrageType
+from models import OrderSide, Market, ArbitrageOpportunity, ArbitrageType
 from fee_calculator import FeeCalculator
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ class CrossMarketScanner:
                 }
                 legs.append(leg)
                 
-                fee = self.fee_calculator.calculate_trade_fee(price, 1.0, is_neg_risk=False)
+                fee = self.fee_calculator.calculate_trade_fee(price, 1.0, OrderSide.BUY, is_neg_risk=False)
                 total_fees += fee
             
             net_profit = gross_profit - total_fees

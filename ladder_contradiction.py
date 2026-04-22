@@ -2,7 +2,7 @@
 import logging
 from typing import Optional
 
-from models import Market, ArbitrageOpportunity, ArbitrageType
+from models import OrderSide, Market, ArbitrageOpportunity, ArbitrageType
 from fee_calculator import FeeCalculator
 
 logger = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ class LadderContradictionScanner:
         ]
         
         total_fees = sum(
-            self.fee_calculator.calculate_trade_fee(leg["price"], leg["size"], is_neg_risk=False)
+            self.fee_calculator.calculate_trade_fee(leg["price"], leg["size"], OrderSide.BUY, is_neg_risk=False)
             for leg in legs
         )
         

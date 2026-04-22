@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 from collections import defaultdict
 
-from models import Market, ArbitrageOpportunity, ArbitrageType, MarketType
+from models import OrderSide, Market, ArbitrageOpportunity, ArbitrageType, MarketType
 from fee_calculator import FeeCalculator
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ class NegRiskAdapter:
                 "is_neg_risk": True
             }
             legs.append(leg)
-            fee = self.fee_calculator.calculate_trade_fee(price, 1.0, is_neg_risk=True)
+            fee = self.fee_calculator.calculate_trade_fee(price, 1.0, OrderSide.BUY, is_neg_risk=True)
             total_fees += fee
         
         net_profit = gross_profit - total_fees
@@ -163,7 +163,7 @@ class NegRiskAdapter:
                 "is_neg_risk": True
             }
             legs.append(leg)
-            fee = self.fee_calculator.calculate_trade_fee(no_price, 1.0, is_neg_risk=True)
+            fee = self.fee_calculator.calculate_trade_fee(no_price, 1.0, OrderSide.BUY, is_neg_risk=True)
             total_fees += fee
         
         net_profit = gross_profit - total_fees
@@ -235,7 +235,7 @@ class NegRiskAdapter:
                     ]
                     
                     total_fees = sum(
-                        self.fee_calculator.calculate_trade_fee(l["price"], l["size"], is_neg_risk=True)
+                        self.fee_calculator.calculate_trade_fee(l["price"], l["size"], OrderSide.BUY, is_neg_risk=True)
                         for l in legs
                     )
                     
