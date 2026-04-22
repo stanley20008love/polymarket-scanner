@@ -1,0 +1,32 @@
+scanner:
+  scan_interval: 30
+  min_profit_threshold: 0.02
+  max_position_size: 100
+  markets_to_scan:
+    - "politics"
+    - "crypto"
+    - "sports"
+    - "science"
+
+risk:
+  max_daily_loss: 50
+  max_open_positions: 5
+  max_single_bet_percentage: 0.1
+  stop_loss_percentage: 0.15
+
+fees:
+  maker_fee: 0.0
+  taker_fee: 0.02
+  withdrawal_fee: 0.0
+  neg_risk_fee: 0.02
+
+api:
+  polymarket_clob_url: "https://clob.polymarket.com"
+  polymarket_gamma_url: "https://gamma-api.polymarket.com"
+  polymarket_ws_url: "wss://ws-subscriptions-clob.polymarket.com/ws"
+  deribit_url: "https://www.deribit.com/api/v2"
+  deribit_ws_url: "wss://www.deribit.com/ws/api/v2"
+
+logging:
+  level: "INFO"
+  file: "scanner.log"
