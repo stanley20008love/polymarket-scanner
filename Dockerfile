@@ -7,7 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Create Streamlit config with CORS allowed
 RUN mkdir -p .streamlit && \
     echo '[server]' > .streamlit/config.toml && \
     echo 'headless = true' >> .streamlit/config.toml && \
@@ -21,11 +20,5 @@ RUN mkdir -p .streamlit && \
 
 EXPOSE 8501
 
-CMD ["streamlit", "run", "dashboard.py", \
-     "--server.port=$PORT", \
-     "--server.address=0.0.0.0", \
-     "--server.headless=true", \
-     "--server.enableCORS=false", \
-     "--server.enableXsrfProtection=false", \
-     "--server.allowedOrigins=*", \
-     "--browser.gatherUsageStats=false"]
+# Use shell form so $PORT gets expanded
+CMD streamlit run dashboard.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --server.allowedOrigins=* --browser.gatherUsageStats=false
