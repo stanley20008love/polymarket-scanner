@@ -1,8 +1,6 @@
 FROM python:3.11-slim
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
+RUN echo '<h1>Polymarket Scanner - Hello!</h1>' > index.html
 EXPOSE 8501
 ENV PORT=8501
-CMD ["python", "app.py"]
+CMD python -m http.server $PORT --bind 0.0.0.0
