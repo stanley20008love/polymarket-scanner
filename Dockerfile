@@ -1,13 +1,11 @@
-FROM python:3.12-slim
+FROM python:3.12-alpine
 
 WORKDIR /app
 
-# Install curl for healthcheck only
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Install only curl for healthcheck (no build tools needed)
+RUN apk add --no-cache curl
 
-# Copy requirements first for Docker layer caching
+# Copy requirements first for caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
