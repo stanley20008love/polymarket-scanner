@@ -213,4 +213,5 @@ def api_scan():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8501))
-    app.run(host="0.0.0.0", port=port)
+    print(f"Starting Polymarket Scanner on 0.0.0.0:{port}", flush=True)
+    app.run(host="0.0.0.0", port=port, debug=False)

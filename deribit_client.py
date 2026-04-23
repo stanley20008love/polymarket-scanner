@@ -5,7 +5,11 @@ from typing import Optional
 from datetime import datetime
 
 import requests
-import pandas as pd
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
 
 logger = logging.getLogger(__name__)
 
@@ -82,13 +86,17 @@ class DeribitClient:
         result = self._api_call("ticker", {"instrument_name": instrument_name})
         return result
     
-    def get_options_chain(self, currency: str = "BTC") -> pd.DataFrame:
+    def get_options_chain(self, currency: str = "BTC"):
         """
         Get the full options chain with current market data.
         
         Returns DataFrame with: instrument_name, strike, expiry, option_type,
         bid, ask, mid, mark_price, underlying_price, iv, volume, open_interest
         """
+        if not HAS_PANDAS:
+            logger.warning("pandas not installed - get_options_chain unavailable")
+            return []
+        
         instruments = self.get_option_instruments(currency)
         
         if not instruments:
