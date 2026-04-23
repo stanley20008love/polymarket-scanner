@@ -22,5 +22,8 @@ EXPOSE 8501
 ENV PORT=8501
 ENV PYTHONUNBUFFERED=1
 
-# Use gunicorn for production reliability
-CMD ["gunicorn", "--bind", "0.0.0.0:8501", "--workers", "1", "--timeout", "120", "app:app"]
+# Use a start script that reads PORT env var dynamically
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+CMD ["/app/start.sh"]
