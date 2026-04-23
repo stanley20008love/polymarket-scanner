@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies needed for numpy/pandas
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
@@ -15,15 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose port
-EXPOSE 8501
-
-# Environment
+# Zeabur sets PORT env var - our app must listen on it
 ENV PORT=8501
 ENV PYTHONUNBUFFERED=1
 
-# Use a start script that reads PORT env var dynamically
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
-
-CMD ["/app/start.sh"]
+# Start with gunicorn, reading PORT from env
+CMD exec gunicorn --bind "0.0.0.0:${PORT}" --workers 1 --timeout 120 app:app

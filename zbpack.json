@@ -1,4 +1,3 @@
 {
-  "build_type": "docker",
-  "dockerfile": "Dockerfile"
+  "build_type": "docker"
 }
